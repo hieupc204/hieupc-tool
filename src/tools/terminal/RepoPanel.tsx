@@ -3,6 +3,8 @@ import { FolderPicker } from './FolderPicker.tsx';
 import type { Repo } from './repos.ts';
 
 interface Props {
+  /** Bảng đang được thu gọn (vẫn giữ nguyên nội dung đang gõ dở) */
+  hidden: boolean;
   repos: Repo[];
   home: string;
   activeRepoId?: string;
@@ -40,7 +42,7 @@ export function RepoPanel(props: Props) {
   };
 
   return (
-    <aside className="repo-panel">
+    <aside className="repo-panel" hidden={props.hidden}>
       <div className="repo-header">Repo đã lưu</div>
       {repos.length > 5 && (
         <input

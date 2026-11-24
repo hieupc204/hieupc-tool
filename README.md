@@ -50,6 +50,7 @@ Biến môi trường (đều không bắt buộc):
 - Rê chuột vào repo: `+` mở thêm tab mới cho cùng repo, `×` bỏ khỏi danh sách (không xoá thư mục).
 - Hộp duyệt thư mục gắn nhãn `git` cho repo, ẩn thư mục bắt đầu bằng dấu chấm, và mở lại ở nơi duyệt lần trước.
 - Có ô tìm kiếm khi danh sách hơn 5 repo; repo có thư mục không còn tồn tại bị gạch ngang.
+- Nút đầu thanh tab ẩn/hiện bảng repo; màn hình hẹp dưới 640px thì bảng mặc định đóng và nổi đè lên terminal khi mở.
 
 **Thông báo khi chạy xong**
 - Tab có việc đang chạy hiện chấm xanh dương nhấp nháy.
@@ -81,6 +82,8 @@ src/
     themes.ts          Bảng màu các theme
     repos.ts           Gọi API repo và API thư mục
     notifications.ts   Thông báo của trình duyệt
+public/
+  favicon.svg     Biểu tượng trang
 data/repos.json   Danh sách repo đã lưu (tự tạo, không đưa vào git)
 ```
 
@@ -108,7 +111,6 @@ Tool này cho toàn quyền shell trên máy, nên chỉ dành cho dùng cục b
 - "Chạy xong" được đoán theo dòng output: lệnh có quãng im lặng hơn 5 giây giữa chừng bị báo sớm, và chưa phân biệt "xong hẳn" với "agent đang hỏi".
 - Thông báo của trình duyệt đã viết nhưng chưa được thử thực tế.
 - Trong 9 theme mới xem thử Midnight và Solarized Light.
-- Màn hình hẹp dưới 640px ẩn bảng repo.
 - Đọc thư mục hiện tại của shell dùng `lsof` (macOS) hoặc `/proc` (Linux); chưa hỗ trợ Windows.
 - Chưa có test tự động; các tính năng được thử tay trong trình duyệt.
 

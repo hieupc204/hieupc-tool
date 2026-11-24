@@ -28,6 +28,9 @@ interface Session {
   attention?: boolean;
 }
 
+// Màn hình hẹp: bảng repo nổi đè lên terminal thay vì chiếm chỗ bên cạnh
+const isNarrowScreen = () => window.matchMedia('(max-width: 640px)').matches;
+
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 const repoIdsWhere = (sessions: Session[], test: (s: Session) => boolean | undefined) =>
@@ -43,6 +46,7 @@ export function TerminalTool({ active }: { active: boolean }) {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [home, setHome] = useState('');
   const [repoError, setRepoError] = useState<string | null>(null);
+  const [repoPanelOpen, setRepoPanelOpen] = useState(() => !isNarrowScreen());
   const [notifyEnabled, setNotifyEnabled] = useState(loadNotifyEnabled);
   const [notifyBlocked, setNotifyBlocked] = useState(
     () => notificationsSupported && Notification.permission === 'denied',
@@ -159,6 +163,7 @@ export function TerminalTool({ active }: { active: boolean }) {
     const existing = open.find((s) => s.attention) ?? open[0];
     if (existing && !forceNew) setActiveId(existing.id);
     else addSession({ title: repo.name, cwd: repo.path, repoId: repo.id });
+    if (isNarrowScreen()) setRepoPanelOpen(false);
   };
 
   const saveCurrentDir = async () => {
@@ -217,7 +222,9 @@ export function TerminalTool({ active }: { active: boolean }) {
         } as CSSProperties
       }
     >
+      {repoPanelOpen && <div className="repo-backdrop" onClick={() => setRepoPanelOpen(false)} />}
       <RepoPanel
+        hidden={!repoPanelOpen}
         repos={repos}
         home={home}
         activeRepoId={activeSession?.repoId}
@@ -232,6 +239,18 @@ export function TerminalTool({ active }: { active: boolean }) {
       />
       <div className="terminal-main">
         <div className="tabs">
+          <button
+            className={`repo-toggle${attentionCount > 0 && !repoPanelOpen ? ' has-attention' : ''}`}
+            title={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
+            aria-label={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
+            aria-pressed={repoPanelOpen}
+            onClick={() => setRepoPanelOpen((open) => !open)}
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+              <rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" />
+              <path d="M6 2.7v10.6" />
+            </svg>
+          </button>
           {sessions.map((session) => (
             <div
               key={session.id}

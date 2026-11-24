@@ -55,9 +55,10 @@ Các điểm bạn có thể muốn chỉnh:
 
 ## Việc dọn dẹp nhỏ
 
-- [ ] Thêm favicon (hiện trình duyệt báo lỗi 404 cho `favicon.ico`).
-- [ ] Khởi tạo git cho dự án (`git init`) — chưa làm vì bạn chưa yêu cầu.
-- [ ] Màn hình hẹp dưới 640px: bảng repo đang bị ẩn hẳn, chưa có nút mở lại.
+- [x] Thêm favicon.
+- [x] Khởi tạo git và đẩy lên GitHub (`hieupc204/hieupc-tool`).
+- [x] Nút ẩn/hiện bảng repo ở đầu thanh tab; màn hình hẹp dưới 640px thì bảng nổi đè lên terminal.
+- [x] Đưa `.gitignore` lên GitHub.
 
 ## Ý của bạn
 
