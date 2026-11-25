@@ -24,7 +24,7 @@ export function ThemePicker({ value, onChange }: Props) {
     <div className="theme-picker">
       <button className="theme-button" title="Đổi theme màu" onClick={() => setOpen((v) => !v)}>
         <Swatch theme={value} />
-        {value.name}
+        <span className="theme-name">{value.name}</span>
       </button>
       {open && (
         <>

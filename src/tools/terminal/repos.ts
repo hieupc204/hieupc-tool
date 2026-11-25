@@ -4,9 +4,17 @@ export interface Repo {
   path: string;
   /** Thư mục còn tồn tại trên máy hay không */
   exists: boolean;
+  isGit: boolean;
+  /** Các worktree phụ: thư mục riêng trên nhánh riêng của cùng repo */
+  worktrees: Worktree[];
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+export interface Worktree {
+  path: string;
+  branch: string | null;
+}
+
+export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
@@ -39,4 +47,14 @@ export const reposApi = {
       body: JSON.stringify(target),
     }),
   remove: (id: string) => request<null>(`/api/repos/${id}`, { method: 'DELETE' }),
+  addWorktree: (id: string, branch: string) =>
+    request<{ worktree: Worktree; repo: Repo }>(`/api/repos/${id}/worktrees`, {
+      method: 'POST',
+      body: JSON.stringify({ branch }),
+    }),
+  removeWorktree: (id: string, path: string) =>
+    request<{ repo: Repo }>(`/api/repos/${id}/worktrees`, {
+      method: 'DELETE',
+      body: JSON.stringify({ path }),
+    }),
 };

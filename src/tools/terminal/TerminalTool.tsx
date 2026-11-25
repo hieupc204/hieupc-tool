@@ -6,26 +6,62 @@ import {
   saveNotifyEnabled,
   showNotification,
 } from './notifications.ts';
-import { RepoPanel } from './RepoPanel.tsx';
-import { type Repo, reposApi } from './repos.ts';
-import { type AttentionReason, type SessionStatus, TerminalView } from './TerminalView.tsx';
+import { RepoPanel, worktreeTitle } from './RepoPanel.tsx';
+import { type Repo, reposApi, type Worktree } from './repos.ts';
+import { ReviewPanel } from './ReviewPanel.tsx';
+import { type AttentionReason, type SessionStatus, type Slot, TerminalView } from './TerminalView.tsx';
 import { ThemePicker } from './ThemePicker.tsx';
 import { loadTheme, saveTheme, type TerminalTheme } from './themes.ts';
+import { useReview } from './useReview.ts';
 
 interface Session {
   id: number;
   title: string;
   status: SessionStatus;
-  /** Thư mục khởi đầu; bỏ trống = thư mục mặc định của server */
+  /** Thư mục (repo hoặc worktree) mà tab này gắn với; bỏ trống = terminal tự do */
   cwd?: string;
-  /** Repo đã lưu mà tab này được mở từ đó */
-  repoId?: string;
   /** Id phiên phía server, dùng để hỏi thư mục hiện tại của shell */
   serverId?: string;
   /** Đang có việc chạy trong terminal (agent, build, test…) */
   busy?: boolean;
   /** Có việc vừa xong hoặc đang chờ, mà người dùng chưa nhìn tới tab này */
   attention?: boolean;
+  /** Tab thuộc ô nào khi chia đôi: 0 = trái, 1 = phải. Tab ở bên nào thì luôn hiện ở bên đó. */
+  side: PaneIndex;
+}
+
+/** Tab đang được chọn của mỗi ô: [trái, phải]. null = ô đó chưa có tab nào. */
+type Panes = [number | null, number | null];
+type PaneIndex = 0 | 1;
+
+interface Layout {
+  sessions: Session[];
+  shown: Panes;
+  split: boolean;
+  focusedPane: PaneIndex;
+}
+
+/** Bỏ một tab khỏi bố cục: ô nào mất tab đang chọn thì chọn tab kề bên cùng ô; ô nào hết tab thì gộp về một ô */
+function withoutSession(layout: Layout, id: number): Layout {
+  const closed = layout.sessions.find((s) => s.id === id);
+  if (!closed) return layout;
+  const index = layout.sessions.indexOf(closed);
+  let sessions = layout.sessions.filter((s) => s.id !== id);
+  const shown: Panes = [...layout.shown];
+  if (shown[closed.side] === id) {
+    const sameSide = sessions.filter((s) => s.side === closed.side);
+    const next = sameSide.find((s) => layout.sessions.indexOf(s) > index) ?? sameSide.at(-1);
+    shown[closed.side] = next?.id ?? null;
+  }
+  // Ô trái hết tab mà ô phải còn: dồn tab bên phải sang trái
+  if (shown[0] === null && shown[1] !== null) {
+    sessions = sessions.map((s) => ({ ...s, side: 0 as const }));
+    shown[0] = shown[1];
+    shown[1] = null;
+  }
+  const split = layout.split && shown[0] !== null && shown[1] !== null;
+  const focusedPane = shown[layout.focusedPane] === null ? 0 : layout.focusedPane;
+  return { sessions, shown, split, focusedPane };
 }
 
 // Màn hình hẹp: bảng repo nổi đè lên terminal thay vì chiếm chỗ bên cạnh
@@ -33,15 +69,17 @@ const isNarrowScreen = () => window.matchMedia('(max-width: 640px)').matches;
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-const repoIdsWhere = (sessions: Session[], test: (s: Session) => boolean | undefined) =>
-  new Set(sessions.filter((s) => s.repoId && test(s)).map((s) => s.repoId!));
+const pathsWhere = (sessions: Session[], test: (s: Session) => boolean | undefined) =>
+  new Set(sessions.filter((s) => s.cwd && test(s)).map((s) => s.cwd!));
 
 export function TerminalTool({ active }: { active: boolean }) {
   const nextId = useRef(2);
   const [sessions, setSessions] = useState<Session[]>([
-    { id: 1, title: 'Terminal 1', status: 'connecting' },
+    { id: 1, title: 'Terminal 1', status: 'connecting', side: 0 },
   ]);
-  const [activeId, setActiveId] = useState(1);
+  const [shown, setShown] = useState<Panes>([1, null]);
+  const [isSplit, setIsSplit] = useState(false);
+  const [focusedPane, setFocusedPane] = useState<PaneIndex>(0);
   const [theme, setTheme] = useState(loadTheme);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [home, setHome] = useState('');
@@ -52,20 +90,35 @@ export function TerminalTool({ active }: { active: boolean }) {
     () => notificationsSupported && Notification.permission === 'denied',
   );
 
+  /** Tab đang nhận bàn phím; các thao tác "hiện tại" đều tính theo tab này */
+  const activeId = shown[focusedPane] ?? shown[0];
   const activeSession = sessions.find((s) => s.id === activeId);
 
-  // Các callback từ terminal sống lâu hơn một lần render, nên đọc trạng thái mới nhất qua ref
-  const latest = useRef({ sessions, activeId, active, notifyEnabled });
-  latest.current = { sessions, activeId, active, notifyEnabled };
+  // Thay đổi chưa commit của repo mà tab đang chọn đang đứng; agent chạy xong thì đọc lại ngay
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const review = useReview(
+    { sessionId: activeSession?.serverId, path: activeSession?.cwd },
+    active,
+    reviewOpen,
+    Boolean(activeSession?.busy),
+  );
+  const reviewResult = activeSession ? review.result : { root: null };
+  const changeCount = reviewResult?.root ? reviewResult.total : 0;
+  /** Các tab đang hiện trên màn hình: chia đôi thì mỗi ô một tab, không thì chỉ tab đang chọn */
+  const visibleIds = isSplit ? shown : [activeId];
 
-  /** Người dùng có đang nhìn thẳng vào tab này không */
+  // Các callback từ terminal sống lâu hơn một lần render, nên đọc trạng thái mới nhất qua ref
+  const latest = useRef({ sessions, visibleIds, active, notifyEnabled });
+  latest.current = { sessions, visibleIds, active, notifyEnabled };
+
+  /** Tab này có đang hiện trước mắt người dùng không (ở ô trái hoặc ô phải) */
   const isWatching = (id: number) =>
     latest.current.active &&
-    latest.current.activeId === id &&
+    latest.current.visibleIds.includes(id) &&
     document.visibilityState === 'visible' &&
     document.hasFocus();
 
-  useEffect(() => {
+  const loadRepos = () =>
     reposApi
       .list()
       .then((data) => {
@@ -73,6 +126,9 @@ export function TerminalTool({ active }: { active: boolean }) {
         setHome(data.home);
       })
       .catch((err) => setRepoError(`Không tải được danh sách repo: ${errorMessage(err)}`));
+
+  useEffect(() => {
+    loadRepos();
   }, []);
 
   const changeTheme = (next: TerminalTheme) => {
@@ -80,19 +136,49 @@ export function TerminalTool({ active }: { active: boolean }) {
     saveTheme(next);
   };
 
-  const addSession = (init?: Pick<Session, 'title' | 'cwd' | 'repoId'>) => {
+  /** Đưa một tab lên hiển thị ở đúng ô của nó và chuyển bàn phím sang ô đó */
+  const showSession = (id: number) => {
+    const session = latest.current.sessions.find((s) => s.id === id);
+    if (!session) return;
+    setShown((prev) => {
+      const next: Panes = [...prev];
+      next[session.side] = id;
+      return next;
+    });
+    setFocusedPane(session.side);
+  };
+
+  const addSession = (init?: Pick<Session, 'title' | 'cwd'>, side: PaneIndex = focusedPane) => {
     const id = nextId.current++;
-    setSessions((prev) => [...prev, { title: `Terminal ${id}`, ...init, id, status: 'connecting' }]);
-    setActiveId(id);
+    setSessions((prev) => [...prev, { title: `Terminal ${id}`, ...init, id, status: 'connecting', side }]);
+    setShown((prev) => {
+      const next: Panes = [...prev];
+      next[side] = id;
+      return next;
+    });
+    setFocusedPane(side);
   };
 
   const closeSession = (id: number) => {
-    const remaining = sessions.filter((s) => s.id !== id);
-    setSessions(remaining);
-    if (id === activeId && remaining.length > 0) {
-      const index = sessions.findIndex((s) => s.id === id);
-      setActiveId(remaining[Math.min(index, remaining.length - 1)].id);
+    const next = withoutSession({ sessions, shown, split: isSplit, focusedPane }, id);
+    setSessions(next.sessions);
+    setShown(next.shown);
+    setIsSplit(next.split);
+    setFocusedPane(next.focusedPane);
+  };
+
+  // Chia đôi: ô phải đã có tab thì hiện lại; chưa có thì mở một terminal mới ở đó,
+  // cùng thư mục với tab đang xem (agent bên này, dev server bên kia)
+  const toggleSplit = () => {
+    if (isSplit) {
+      setIsSplit(false);
+      return;
     }
+    if (!activeSession) return;
+    if (shown[1] === null) {
+      addSession(activeSession.cwd ? { title: activeSession.title, cwd: activeSession.cwd } : undefined, 1);
+    }
+    setIsSplit(true);
   };
 
   const patchSession = useCallback((id: number, patch: Partial<Session>) => {
@@ -110,19 +196,15 @@ export function TerminalTool({ active }: { active: boolean }) {
     const title = reason === 'done' ? `${session.title}: đã chạy xong` : `${session.title}: cần bạn xem`;
     showNotification(title, text || session.cwd || '', `web-tool-terminal-${id}`, () => {
       window.focus();
-      setActiveId(id);
+      showSession(id);
     });
   };
 
   // Nhìn tới tab nào thì tắt dấu báo của tab đó
   useEffect(() => {
     const clear = () => {
-      if (!isWatching(activeId)) return;
-      setSessions((prev) =>
-        prev.some((s) => s.id === activeId && s.attention)
-          ? prev.map((s) => (s.id === activeId ? { ...s, attention: false } : s))
-          : prev,
-      );
+      const watched = (s: Session) => s.attention && isWatching(s.id);
+      setSessions((prev) => (prev.some(watched) ? prev.map((s) => (watched(s) ? { ...s, attention: false } : s)) : prev));
     };
     clear();
     window.addEventListener('focus', clear);
@@ -131,7 +213,7 @@ export function TerminalTool({ active }: { active: boolean }) {
       window.removeEventListener('focus', clear);
       document.removeEventListener('visibilitychange', clear);
     };
-  }, [activeId, active, sessions]);
+  }, [shown, isSplit, focusedPane, active, sessions]);
 
   const attentionCount = sessions.filter((s) => s.attention).length;
   useEffect(() => {
@@ -155,14 +237,18 @@ export function TerminalTool({ active }: { active: boolean }) {
       [...prev.filter((r) => r.id !== repo.id), repo].sort((a, b) => a.name.localeCompare(b.name)),
     );
 
-  // Bấm vào repo: quay lại tab đang mở của repo đó nếu có, không thì mở tab mới ngay tại repo
-  const openRepo = (repo: Repo, forceNew: boolean) => {
+  // Bấm vào repo hoặc worktree: quay lại tab đang mở ở thư mục đó nếu có, không thì mở tab mới ở ô đang đứng
+  const openPath = (path: string, title: string, forceNew: boolean) => {
     setRepoError(null);
-    const open = sessions.filter((s) => s.repoId === repo.id && s.status !== 'closed');
+    // Đang chia đôi thì chỉ tính tab của ô đang đứng: ô này chưa có repo đó thì mở tab mới ngay tại đây,
+    // dù ô bên kia đã mở sẵn
+    const open = sessions.filter(
+      (s) => s.cwd === path && s.status !== 'closed' && (!isSplit || s.side === focusedPane),
+    );
     // Ưu tiên tab đang chờ người dùng xem
     const existing = open.find((s) => s.attention) ?? open[0];
-    if (existing && !forceNew) setActiveId(existing.id);
-    else addSession({ title: repo.name, cwd: repo.path, repoId: repo.id });
+    if (existing && !forceNew) showSession(existing.id);
+    else addSession({ title, cwd: path });
     if (isNarrowScreen()) setRepoPanelOpen(false);
   };
 
@@ -171,7 +257,7 @@ export function TerminalTool({ active }: { active: boolean }) {
     try {
       const { repo, created } = await reposApi.add({ sessionId: activeSession.serverId });
       mergeRepo(repo);
-      patchSession(activeSession.id, { title: repo.name, repoId: repo.id });
+      patchSession(activeSession.id, { title: repo.name, cwd: repo.path });
       setRepoError(created ? null : `“${repo.name}” đã có trong danh sách.`);
     } catch (err) {
       setRepoError(errorMessage(err));
@@ -200,17 +286,147 @@ export function TerminalTool({ active }: { active: boolean }) {
     }
   };
 
+  // Tạo worktree rồi mở luôn terminal ở đó
+  const createWorktree = async (repo: Repo, branch: string) => {
+    try {
+      const result = await reposApi.addWorktree(repo.id, branch);
+      mergeRepo(result.repo);
+      setRepoError(null);
+      addSession({ title: worktreeTitle(repo, result.worktree), cwd: result.worktree.path });
+      return true;
+    } catch (err) {
+      setRepoError(errorMessage(err));
+      return false;
+    }
+  };
+
+  const removeWorktree = async (repo: Repo, worktree: Worktree) => {
+    try {
+      const result = await reposApi.removeWorktree(repo.id, worktree.path);
+      mergeRepo(result.repo);
+      setRepoError(null);
+    } catch (err) {
+      setRepoError(`Không xoá được worktree: ${errorMessage(err)}`);
+    }
+  };
+
   const dotClass = (session: Session) => {
     if (session.status !== 'open') return `is-${session.status}`;
     if (session.attention) return 'is-attention';
     return session.busy ? 'is-busy' : 'is-open';
   };
 
+  const slotOf = (id: number): Slot => {
+    if (!isSplit) return id === activeId ? 'full' : null;
+    if (shown[0] === id) return 'left';
+    return shown[1] === id ? 'right' : null;
+  };
+
+  const tabClass = (session: Session) =>
+    [
+      'tab',
+      session.id === activeId && 'is-active',
+      session.id !== activeId && visibleIds.includes(session.id) && 'is-shown',
+      session.attention && 'has-attention',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
   const notifyTitle = notifyBlocked
     ? 'Trình duyệt đang chặn thông báo của trang này. Hãy cho phép trong cài đặt trang rồi bấm lại.'
     : notifyEnabled
       ? 'Đang bật thông báo khi terminal chạy xong. Bấm để tắt.'
       : 'Bật thông báo của trình duyệt khi terminal chạy xong';
+  const splitTitle = isSplit
+    ? 'Bỏ chia đôi (các tab bên phải vẫn còn, chia lại là về đúng chỗ cũ)'
+    : shown[1] !== null
+      ? 'Chia đôi: hiện lại các tab bên phải'
+      : 'Chia đôi: mở thêm một terminal bên phải, cùng thư mục';
+
+  // Chia đôi thì mỗi ô có dải tab riêng nằm ngay trên ô đó; không chia thì một dải chứa mọi tab
+  const tabStrip = (list: Session[], side?: PaneIndex) => (
+    <div className="tab-strip">
+      {list.map((session) => (
+        <div
+          key={session.id}
+          className={tabClass(session)}
+          // Không để tab lấy mất focus của terminal
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => showSession(session.id)}
+        >
+          <span className={`status-dot ${dotClass(session)}`} />
+          {session.title}
+          <button
+            className="tab-close"
+            title="Đóng phiên"
+            onClick={(event) => {
+              event.stopPropagation();
+              closeSession(session.id);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        className="tab-add"
+        title={side === undefined ? 'Mở terminal mới' : `Mở terminal mới ở ô bên ${side === 0 ? 'trái' : 'phải'}`}
+        onClick={() => addSession(undefined, side)}
+      >
+        +
+      </button>
+    </div>
+  );
+
+  const cramped = isSplit && reviewOpen;
+
+  // Các nút bên phải thanh tab; khi chia đôi thì nằm cuối dải tab của ô phải
+  const barControls = (
+    <>
+      <div className="tabs-spacer" />
+      <button
+        className={`bar-button review-toggle${reviewOpen ? ' is-on' : ''}`}
+        title={reviewOpen ? 'Đóng bảng thay đổi' : 'Xem các file thay đổi chưa commit'}
+        aria-label={reviewOpen ? 'Đóng bảng thay đổi' : 'Xem các file thay đổi chưa commit'}
+        aria-pressed={reviewOpen}
+        onClick={() => setReviewOpen((open) => !open)}
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+          <rect x="2.7" y="1.7" width="10.6" height="12.6" rx="2" />
+          <path d="M8 4.5v4M6 6.5h4M6 11.2h4" />
+        </svg>
+        {changeCount > 0 && <span className="review-badge">{changeCount}</span>}
+      </button>
+      <button
+        className={`bar-button${isSplit ? ' is-on' : ''}`}
+        title={splitTitle}
+        aria-label={splitTitle}
+        aria-pressed={isSplit}
+        onClick={toggleSplit}
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+          <rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" />
+          <path d="M8 2.7v10.6" />
+        </svg>
+      </button>
+      {/* Vừa chia đôi vừa mở bảng thay đổi thì rất chật: tạm ẩn hai nút cài đặt ít dùng, nhường chỗ cho tab */}
+      {!cramped && notificationsSupported && (
+        <button
+          className={`notify-toggle${notifyEnabled ? ' is-on' : ''}${notifyBlocked ? ' is-blocked' : ''}`}
+          title={notifyTitle}
+          aria-label={notifyTitle}
+          aria-pressed={notifyEnabled}
+          onClick={toggleNotify}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true">
+            <path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5v2.3L2.2 10.6a.75.75 0 0 0 .65 1.15h10.3a.75.75 0 0 0 .65-1.15L12.5 8.3V6A4.5 4.5 0 0 0 8 1.5ZM6.3 13a1.75 1.75 0 0 0 3.4 0H6.3Z" />
+          </svg>
+          <span className="notify-label">{notifyEnabled ? 'Thông báo: bật' : 'Thông báo: tắt'}</span>
+        </button>
+      )}
+      {!cramped && <ThemePicker value={theme} onChange={changeTheme} />}
+    </>
+  );
 
   return (
     <div
@@ -219,6 +435,8 @@ export function TerminalTool({ active }: { active: boolean }) {
         {
           '--term-bg': theme.colors.background,
           '--term-fg': theme.colors.foreground,
+          '--term-green': theme.colors.green,
+          '--term-red': theme.colors.red,
         } as CSSProperties
       }
     >
@@ -227,71 +445,44 @@ export function TerminalTool({ active }: { active: boolean }) {
         hidden={!repoPanelOpen}
         repos={repos}
         home={home}
-        activeRepoId={activeSession?.repoId}
-        busyRepoIds={repoIdsWhere(sessions, (s) => s.busy && s.status === 'open')}
-        attentionRepoIds={repoIdsWhere(sessions, (s) => s.attention)}
+        activePath={activeSession?.cwd}
+        busyPaths={pathsWhere(sessions, (s) => s.busy && s.status === 'open')}
+        attentionPaths={pathsWhere(sessions, (s) => s.attention)}
         canSaveCurrent={Boolean(activeSession?.serverId) && activeSession?.status === 'open'}
         error={repoError}
-        onOpen={openRepo}
+        onOpen={openPath}
         onSaveCurrent={saveCurrentDir}
         onAddPath={addRepoByPath}
         onRemove={removeRepo}
+        onCreateWorktree={createWorktree}
+        onRemoveWorktree={removeWorktree}
       />
       <div className="terminal-main">
-        <div className="tabs">
-          <button
-            className={`repo-toggle${attentionCount > 0 && !repoPanelOpen ? ' has-attention' : ''}`}
-            title={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
-            aria-label={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
-            aria-pressed={repoPanelOpen}
-            onClick={() => setRepoPanelOpen((open) => !open)}
-          >
-            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-              <rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" />
-              <path d="M6 2.7v10.6" />
-            </svg>
-          </button>
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              className={`tab${session.id === activeId ? ' is-active' : ''}${session.attention ? ' has-attention' : ''}`}
-              onClick={() => setActiveId(session.id)}
-            >
-              <span className={`status-dot ${dotClass(session)}`} />
-              {session.title}
-              <button
-                className="tab-close"
-                title="Đóng phiên"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeSession(session.id);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          <button className="tab-add" title="Mở terminal mới" onClick={() => addSession()}>
-            +
-          </button>
-          <div className="tabs-spacer" />
-          {notificationsSupported && (
+        <div className={`tabs${reviewOpen ? ' is-compact' : ''}`}>
+          <div className="tab-group">
             <button
-              className={`notify-toggle${notifyEnabled ? ' is-on' : ''}${notifyBlocked ? ' is-blocked' : ''}`}
-              title={notifyTitle}
-              aria-label={notifyTitle}
-              aria-pressed={notifyEnabled}
-              onClick={toggleNotify}
+              className={`repo-toggle${attentionCount > 0 && !repoPanelOpen ? ' has-attention' : ''}`}
+              title={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
+              aria-label={repoPanelOpen ? 'Ẩn bảng repo' : 'Hiện bảng repo'}
+              aria-pressed={repoPanelOpen}
+              onClick={() => setRepoPanelOpen((open) => !open)}
             >
-              <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true">
-                <path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5v2.3L2.2 10.6a.75.75 0 0 0 .65 1.15h10.3a.75.75 0 0 0 .65-1.15L12.5 8.3V6A4.5 4.5 0 0 0 8 1.5ZM6.3 13a1.75 1.75 0 0 0 3.4 0H6.3Z" />
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+                <rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" />
+                <path d="M6 2.7v10.6" />
               </svg>
-              {notifyEnabled ? 'Thông báo: bật' : 'Thông báo: tắt'}
             </button>
+            {tabStrip(isSplit ? sessions.filter((s) => s.side === 0) : sessions, isSplit ? 0 : undefined)}
+            {!isSplit && barControls}
+          </div>
+          {isSplit && (
+            <div className="tab-group">
+              {tabStrip(sessions.filter((s) => s.side === 1), 1)}
+              {barControls}
+            </div>
           )}
-          <ThemePicker value={theme} onChange={changeTheme} />
         </div>
-        <div className="terminal-body">
+        <div className={`terminal-body${isSplit ? ` is-split focus-${focusedPane === 0 ? 'left' : 'right'}` : ''}`}>
           {sessions.length === 0 && (
             <div className="empty">
               <button className="primary" onClick={() => addSession()}>
@@ -302,9 +493,11 @@ export function TerminalTool({ active }: { active: boolean }) {
           {sessions.map((session) => (
             <TerminalView
               key={session.id}
-              active={active && session.id === activeId}
+              slot={active ? slotOf(session.id) : null}
+              focused={active && session.id === activeId}
               theme={theme}
               cwd={session.cwd}
+              onFocus={() => setFocusedPane(session.side)}
               onStatus={(status) => patchSession(session.id, { status })}
               onReady={(serverId) => patchSession(session.id, { serverId })}
               onBusy={(busy) => patchSession(session.id, { busy })}
@@ -313,6 +506,14 @@ export function TerminalTool({ active }: { active: boolean }) {
           ))}
         </div>
       </div>
+      {reviewOpen && (
+        <ReviewPanel
+          result={reviewResult}
+          error={review.error}
+          onRefresh={() => void review.refresh()}
+          onClose={() => setReviewOpen(false)}
+        />
+      )}
     </div>
   );
 }

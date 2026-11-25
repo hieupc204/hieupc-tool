@@ -2,7 +2,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { droppedPaths, hasDroppable } from './dropFiles.ts';
 import type { TerminalTheme } from './themes.ts';
 
 export type SessionStatus = 'connecting' | 'open' | 'closed';
@@ -17,8 +18,15 @@ type ServerMessage =
   | { type: 'exit'; code: number }
   | { type: 'error'; message: string };
 
+/** Vị trí hiển thị: cả vùng, nửa trái, nửa phải; null = đang ẩn */
+export type Slot = 'full' | 'left' | 'right' | null;
+
 interface Props {
-  active: boolean;
+  slot: Slot;
+  /** Ô đang nhận bàn phím */
+  focused: boolean;
+  /** Người dùng bấm vào terminal này */
+  onFocus: () => void;
   theme: TerminalTheme;
   /** Thư mục khởi đầu của shell (chỉ dùng lúc tạo phiên) */
   cwd?: string;
@@ -31,7 +39,7 @@ interface Props {
 }
 
 export function TerminalView(props: Props) {
-  const { active, theme, cwd } = props;
+  const { slot, focused, theme, cwd } = props;
   const containerRef = useRef<HTMLDivElement>(null);
   // Callback mới nhất, để effect tạo terminal (chỉ chạy một lần) luôn gọi đúng bản hiện tại
   const callbacks = useRef(props);
@@ -39,6 +47,11 @@ export function TerminalView(props: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<() => void>(() => {});
   const initialTheme = useRef(theme);
+  const insertRef = useRef<(data: DataTransfer) => void>(() => {});
+  const dragDepth = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+  /** Dòng báo nổi ở góc: đang tải file lên, hoặc lỗi */
+  const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
     const container = containerRef.current!;
@@ -112,7 +125,37 @@ export function TerminalView(props: Props) {
     const observer = new ResizeObserver(fit);
     observer.observe(container);
 
+    // Kéo thả / dán file: chèn đường dẫn vào dòng lệnh như terminal thật.
+    // Dùng term.paste để chương trình bật bracketed paste (Claude Code…) nhận ra đây là nội dung dán.
+    let noteTimer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    const insert = async (data: DataTransfer) => {
+      clearTimeout(noteTimer);
+      setNote('Đang đưa file vào…');
+      const { paths, errors } = await droppedPaths(data);
+      if (disposed) return;
+      if (paths.length) {
+        term.paste(paths.join(' ') + ' ');
+        term.focus();
+      }
+      setNote(errors.length ? errors.join(' · ') : null);
+      if (errors.length) noteTimer = setTimeout(() => setNote(null), 6000);
+    };
+    insertRef.current = (data) => void insert(data);
+    // Bắt ở pha capture để chặn trước xterm; văn bản thường thì vẫn để xterm tự dán
+    const onPaste = (event: ClipboardEvent) => {
+      const data = event.clipboardData;
+      if (!data || data.files.length === 0 || data.getData('text/plain')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void insert(data);
+    };
+    container.addEventListener('paste', onPaste, true);
+
     return () => {
+      disposed = true;
+      clearTimeout(noteTimer);
+      container.removeEventListener('paste', onPaste, true);
       observer.disconnect();
       onData.dispose();
       onResize.dispose();
@@ -131,10 +174,46 @@ export function TerminalView(props: Props) {
   }, [theme]);
 
   useEffect(() => {
-    if (!active) return;
-    fitRef.current();
-    termRef.current?.focus();
-  }, [active]);
+    if (slot) fitRef.current();
+  }, [slot]);
 
-  return <div ref={containerRef} className="terminal-view" hidden={!active} />;
+  useEffect(() => {
+    if (focused) termRef.current?.focus();
+  }, [focused]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`terminal-view slot-${slot ?? 'none'}${dragOver ? ' is-drop-target' : ''}`}
+      hidden={!slot}
+      onMouseDown={props.onFocus}
+      onFocusCapture={props.onFocus}
+      onDragEnter={(event) => {
+        if (!hasDroppable(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setDragOver(true);
+      }}
+      onDragOver={(event) => {
+        if (!hasDroppable(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragOver(false);
+      }}
+      onDrop={(event) => {
+        dragDepth.current = 0;
+        setDragOver(false);
+        if (!hasDroppable(event.dataTransfer)) return;
+        event.preventDefault();
+        props.onFocus();
+        insertRef.current(event.dataTransfer);
+      }}
+    >
+      {dragOver && <div className="terminal-drop-hint">Thả để chèn đường dẫn file</div>}
+      {note && <div className="terminal-note">{note}</div>}
+    </div>
+  );
 }

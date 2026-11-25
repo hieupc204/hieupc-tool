@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createFsRouter } from './fs.ts';
 import { createReposRouter } from './repos.ts';
+import { createReviewRouter } from './review.ts';
 import { apiGuard } from './security.ts';
 import { attachTerminal } from './terminal.ts';
+import { createUploadsRouter } from './uploads.ts';
 
 // Mặc định chỉ nghe trên loopback: tool này mở shell nên không được lộ ra mạng.
 const HOST = process.env.HOST || '127.0.0.1';
@@ -22,6 +24,8 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/repos', createReposRouter());
 app.use('/api/fs', createFsRouter());
+app.use('/api/review', createReviewRouter());
+app.use('/api/uploads', createUploadsRouter());
 
 // Production: phục vụ bản build của Vite. Khi dev thì Vite tự phục vụ và proxy sang đây.
 const distDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');

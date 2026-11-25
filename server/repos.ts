@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
+import { addWorktree, getGitInfo, removeWorktree } from './git.ts';
 import { getSessionCwd, isDirectory } from './terminal.ts';
 
 interface Repo {
@@ -41,8 +42,17 @@ export function normalizePath(input: string): string {
 
 async function withStatus(repos: Repo[]) {
   const sorted = [...repos].sort((a, b) => a.name.localeCompare(b.name));
-  return Promise.all(sorted.map(async (repo) => ({ ...repo, exists: await isDirectory(repo.path) })));
+  return Promise.all(sorted.map(describe));
 }
+
+/** Thêm thông tin đọc từ ổ đĩa: thư mục còn không, có phải repo git không, các worktree phụ. */
+async function describe(repo: Repo) {
+  const exists = await isDirectory(repo.path);
+  const gitInfo = exists ? await getGitInfo(repo.path) : { isGit: false, worktrees: [] };
+  return { ...repo, exists, ...gitInfo };
+}
+
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function createReposRouter(): Router {
   const router = Router();
@@ -82,7 +92,7 @@ export function createReposRouter(): Router {
       repo = { id: randomUUID(), name: label, path: dir };
       await writeRepos([...repos, repo]);
     }
-    res.status(created ? 201 : 200).json({ repo: { ...repo, exists: true }, created });
+    res.status(created ? 201 : 200).json({ repo: await describe(repo), created });
   });
 
   router.delete('/:id', async (req, res) => {
@@ -90,6 +100,37 @@ export function createReposRouter(): Router {
     const remaining = repos.filter((r) => r.id !== req.params.id);
     if (remaining.length !== repos.length) await writeRepos(remaining);
     res.status(204).end();
+  });
+
+  // Tạo worktree: một thư mục riêng trên một nhánh riêng, để chạy thêm agent mà không giẫm lên nhau
+  router.post('/:id/worktrees', async (req, res) => {
+    const repo = (await readRepos()).find((r) => r.id === req.params.id);
+    const branch = typeof req.body?.branch === 'string' ? req.body.branch.trim() : '';
+    if (!repo || !branch) {
+      res.status(400).json({ error: repo ? 'Thiếu tên nhánh' : 'Không tìm thấy repo' });
+      return;
+    }
+    try {
+      const worktree = await addWorktree(repo.path, branch);
+      res.status(201).json({ worktree, repo: await describe(repo) });
+    } catch (err) {
+      res.status(400).json({ error: errorText(err) });
+    }
+  });
+
+  router.delete('/:id/worktrees', async (req, res) => {
+    const repo = (await readRepos()).find((r) => r.id === req.params.id);
+    const worktreePath = typeof req.body?.path === 'string' ? req.body.path : '';
+    if (!repo || !worktreePath) {
+      res.status(400).json({ error: repo ? 'Thiếu đường dẫn worktree' : 'Không tìm thấy repo' });
+      return;
+    }
+    try {
+      await removeWorktree(repo.path, worktreePath);
+      res.json({ repo: await describe(repo) });
+    } catch (err) {
+      res.status(400).json({ error: errorText(err) });
+    }
   });
 
   return router;

@@ -436,8 +436,44 @@ button:disabled {
   align-items: stretch;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
   flex-shrink: 0;
+}
+
+/* Mỗi ô terminal một nhóm tab; chia đôi thì hai nhóm rộng bằng nhau, nằm ngay trên ô của mình */
+.tab-group {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tab-group + .tab-group {
+  border-left: 1px solid var(--border);
+}
+
+/* Chỉ dải tab cuộn ngang, các nút hai đầu luôn đứng yên */
+.tab-strip {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab,
+.tab-add {
+  flex-shrink: 0;
+}
+
+/* Chia đôi thì ô phải chật: nút thông báo chỉ còn biểu tượng */
+.tab-group + .tab-group .notify-label,
+.tabs.is-compact .notify-label,
+.tabs.is-compact .theme-name {
+  display: none;
 }
 
 .tab {
@@ -669,6 +705,136 @@ button:disabled {
   inset: 8px 4px 4px 10px;
 }
 
+/* Chia đôi: hai terminal nằm cạnh nhau, vạch ngăn ở giữa */
+.terminal-view.slot-left {
+  right: calc(50% + 5px);
+}
+
+.terminal-view.slot-right {
+  left: calc(50% + 10px);
+}
+
+.terminal-body.is-split::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--term-fg) 22%, transparent);
+}
+
+/* Vạch màu trên đầu ô đang nhận bàn phím */
+.terminal-body.is-split::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 2px;
+  background: var(--accent);
+  transition: left 0.12s;
+}
+
+.terminal-body.is-split.focus-right::after {
+  left: 50%;
+}
+
+.tab.is-shown {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.bar-button {
+  display: grid;
+  place-items: center;
+  padding: 0 11px;
+  flex-shrink: 0;
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+}
+
+.bar-button:hover {
+  color: var(--text);
+  background: #1f2430;
+}
+
+.bar-button.is-on {
+  color: var(--accent);
+}
+
+.worktree-item {
+  margin-left: 14px;
+}
+
+.worktree-item .repo-open {
+  padding: 4px 8px;
+}
+
+.worktree-item .repo-name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.worktree-item.is-active .repo-name,
+.worktree-item:hover .repo-name {
+  color: var(--text);
+}
+
+.worktree-mark {
+  margin-right: 6px;
+  color: var(--accent);
+}
+
+.worktree-form {
+  margin: 4px 0 6px 14px;
+}
+
+.repo-action.is-confirm {
+  display: block;
+  font-size: 12px;
+  color: #fff;
+  background: #c0473f;
+}
+
+/* Kéo thả file vào terminal */
+.terminal-view.is-drop-target::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.terminal-drop-hint,
+.terminal-note {
+  position: absolute;
+  z-index: 6;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  pointer-events: none;
+}
+
+.terminal-drop-hint {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-color: var(--accent);
+}
+
+.terminal-note {
+  right: 12px;
+  bottom: 8px;
+  max-width: calc(100% - 24px);
+}
+
 /* Nền mặc định của xterm là đen, lộ thành vệt mảnh ở mép khi toạ độ lẻ pixel */
 .terminal-view .xterm-viewport {
   background-color: var(--term-bg) !important;
@@ -704,6 +870,14 @@ button:disabled {
     background: rgb(0 0 0 / 45%);
   }
 
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tab-strip {
+    min-width: 90px;
+  }
+
   .notify-toggle {
     font-size: 0;
     gap: 0;
@@ -724,5 +898,327 @@ button:disabled {
 
   .nav-icon {
     font-size: 12px;
+  }
+}
+
+/* Bảng xem thay đổi chưa commit */
+.review-panel {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 320px;
+  max-width: calc(100% - 650px);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: #12151b;
+}
+
+.review-panel.is-expanded {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  max-width: none;
+  border-left: 0;
+}
+
+.review-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.review-resize:hover {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.review-header,
+.review-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-header {
+  min-height: 37px;
+  background: var(--panel);
+}
+
+.review-title {
+  font-weight: 600;
+}
+
+.review-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-summary {
+  min-height: 32px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  color: var(--muted);
+}
+
+.review-button:hover {
+  color: var(--text);
+  background: #262b36;
+}
+
+.review-message {
+  padding: 10px 12px;
+}
+
+.review-add {
+  color: #4ac07a;
+}
+
+.review-del {
+  color: #f07178;
+}
+
+.review-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.review-file {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Tên file dính trên đầu khi cuộn trong diff dài */
+.review-file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  background: var(--panel);
+}
+
+.review-file-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.review-file-header:hover {
+  background: #1f2430;
+}
+
+.review-caret {
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.review-status {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  color: #e0af4f;
+  border: 1px solid currentColor;
+}
+
+.review-status.is-A {
+  color: #4ac07a;
+}
+
+.review-status.is-D,
+.review-status.is-U {
+  color: #f07178;
+}
+
+.review-status.is-R,
+.review-status.is-C {
+  color: #7aa8ff;
+}
+
+/* Chật thì cắt phần thư mục, giữ nguyên tên file */
+.review-path {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+}
+
+.review-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.review-name {
+  flex: 0 1 auto;
+  min-width: 60px;
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-file.is-viewed .review-name,
+.review-file.is-viewed .review-counts {
+  opacity: 0.5;
+}
+
+.review-again {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #ffb974;
+}
+
+.review-counts {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  font: 11px Menlo, Monaco, monospace;
+}
+
+.review-viewed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 0 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.review-viewed input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.review-diff {
+  overflow-x: auto;
+  background: var(--term-bg);
+  color: var(--term-fg);
+}
+
+.review-diff table {
+  min-width: 100%;
+  border-collapse: collapse;
+  font: 12px/1.5 Menlo, Monaco, 'SF Mono', Consolas, monospace;
+}
+
+.review-row td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.review-row .review-line-no {
+  width: 1px;
+  min-width: 34px;
+  padding: 0 6px;
+  text-align: right;
+  opacity: 0.45;
+  user-select: none;
+}
+
+.review-row .review-sign {
+  width: 1px;
+  padding: 0 4px;
+  user-select: none;
+}
+
+.review-row .review-code {
+  padding-right: 12px;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.review-row.is-add {
+  background: color-mix(in srgb, var(--term-green) 18%, transparent);
+}
+
+.review-row.is-del {
+  background: color-mix(in srgb, var(--term-red) 18%, transparent);
+}
+
+.review-row.is-add .review-sign {
+  color: var(--term-green);
+}
+
+.review-row.is-del .review-sign {
+  color: var(--term-red);
+}
+
+.review-row.is-hunk,
+.review-row.is-note {
+  background: color-mix(in srgb, var(--term-fg) 7%, transparent);
+}
+
+.review-row.is-hunk .review-code,
+.review-row.is-note .review-code {
+  opacity: 0.6;
+}
+
+.review-more {
+  width: 100%;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.review-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.review-badge {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 17px;
+  text-align: center;
+  color: #fff;
+  background: #3d6fd1;
+}
+
+@media (max-width: 1100px) {
+  .review-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    min-width: 0;
+    max-width: none;
+    width: auto !important;
+    border-left: 0;
+  }
+
+  .review-resize {
+    display: none;
   }
 }
